@@ -1,4 +1,4 @@
-# build_disaster_dataset.py
+# build_disaster_dataset_v2.py
 # -*- coding: utf-8 -*-
 import argparse, pandas as pd, re, json, hashlib, unicodedata, os, random
 from typing import Any, Dict, List, Tuple
@@ -30,6 +30,7 @@ PROVINCES = [
     "Tokat","Trabzon","Tunceli","Uşak","Van","Yalova","Yozgat","Zonguldak"
 ]
 PROVINCE_RE = re.compile(r"\b(" + "|".join([re.escape(p) for p in PROVINCES]) + r")\b", flags=re.IGNORECASE)
+NEIGHBORHOOD_RE = re.compile(r"\b([A-ZÇĞİIÖŞÜ][A-Za-zÇĞİIÖŞÜçğıiöşü\-]{2,})\s+(mah(?:allesi)?)\b", flags=re.IGNORECASE)
 
 # Need dictionaries (Turkish cues)
 NEED_PATTERNS = {
@@ -50,6 +51,17 @@ NEED_PATTERNS = {
 }
 NEED_ORDER = ["medical","search_rescue","evacuation","shelter","water","food","info","other"]
 
+NEED_LABELS_TR = {
+    "medical": "tıbbi",
+    "search_rescue": "arama_kurtarma",
+    "evacuation": "tahliye",
+    "shelter": "barınma",
+    "water": "su",
+    "food": "gıda",
+    "info": "bilgi",
+    "other": "diğer"
+}
+
 URGENCY_CRITICAL = [
     r"\bacil\b", r"\bhemen\b", r"\bimdat\b", r"\bnefes alam(ıyor|iyor)\b", r"\bkanama\b",
     r"\benkaz altında\b", r"\byangın\b", r"\bhayati\b", r"\bölmek üzere\b", r"!!!"
@@ -63,91 +75,215 @@ VULN_MAP = {
     "pregnant": [r"\bhamile\b", r"\bgebe\b"],
     "disabled": [r"\bengelli\b", r"\btekerlekli\b", r"\bişitme engelli\b", r"\bgörme engelli\b"]
 }
+VULN_LABELS_TR = {
+    "infant": "bebek",
+    "child": "çocuk",
+    "elderly": "yaşlı",
+    "pregnant": "hamile",
+    "disabled": "engelli"
+}
 
 def find_need(text: str):
-    hits = []; sel = "other"
+    """Metinden ihtiyaç kategorilerini (TR label listesi) ve eşleşen span'leri döndür."""
+    hits: List[str] = []
+    needs_raw: List[str] = []
     for need in NEED_ORDER:
-        if need == "other": continue
+        if need == "other":
+            continue
         for pat in NEED_PATTERNS.get(need, []):
             m = re.search(pat, text, flags=re.IGNORECASE)
             if m:
                 hits.append(m.group(0))
-                if sel == "other": sel = need
-    return sel, list(dict.fromkeys(hits))
+                needs_raw.append(need)
+                break  # aynı kategori için bir eşleşme yeterli
+    # sırasını koruyarak uniqle
+    needs_raw = list(dict.fromkeys(needs_raw))
+    hits = list(dict.fromkeys(hits))
+    needs_tr = [NEED_LABELS_TR.get(n, n) for n in needs_raw]
+    return needs_tr, hits
 
 def find_urgency(text: str):
-    ev = []
+    ev: List[str] = []
     for pat in URGENCY_CRITICAL:
         m = re.search(pat, text, flags=re.IGNORECASE)
         if m:
-            ev.append(m.group(0)); return "critical", ev
+            ev.append(m.group(0))
+            return "critical", ev
     for pat in URGENCY_HIGH:
         m = re.search(pat, text, flags=re.IGNORECASE)
         if m:
-            ev.append(m.group(0)); return "high", ev
+            ev.append(m.group(0))
+            return "high", ev
     return "normal", ev
 
 def find_vulnerable(text: str):
-    groups, spans = [], []
+    groups: List[str] = []
+    spans: List[str] = []
     for tag, pats in VULN_MAP.items():
         for pat in pats:
             m = re.search(pat, text, flags=re.IGNORECASE)
             if m:
-                groups.append(tag); spans.append(m.group(0)); break
-    return groups, spans
+                groups.append(tag)
+                spans.append(m.group(0))
+                break
+    groups = list(dict.fromkeys(groups))
+    spans = list(dict.fromkeys(spans))
+    groups_tr = [VULN_LABELS_TR.get(g, g) for g in groups]
+    return groups_tr, spans
 
 def extract_location(text: str) -> Dict[str, Any]:
-    province = None; district = None; free_text = None; geo_conf = 0.0
+    """
+    Çıktı:
+    {
+      "country": "Turkey" | None,
+      "province": "Gaziantep" | None,
+      "district": "Şahinbey" | None,
+      "neighborhood": "Fidanlık" | None,
+      "address_note": "Fidanlık mah, ..." | None,
+      "geo_confidence": 0.0–1.0
+    }
+    """
+    province = None
+    district = None
+    neighborhood = None
+    address_note = None
+    geo_conf = 0.0
+    country = None
+
     m = PROVINCE_RE.search(text)
     if m:
         province = m.group(0).title()
+        country = "Turkey"
         after = text[m.end():]
         cand = re.search(r"[ ,]*([A-ZÇĞİIÖŞÜ][A-Za-zÇĞİIÖŞÜçğıiöşü\-]{3,})", after)
         if cand:
             d = cand.group(1)
             if d.lower() not in {"civarı","yakını","merkez","ilçe","mahalle","mah","sokak","cadde","bulvar","bulv","köy","köyü","ilçesi"}:
                 district = d.title()
-        start = max(0, m.start()-40); end = min(len(text), m.end()+60)
-        free_text = text[start:end].strip()
-        geo_conf = 0.8 if (province and district) else 0.5
+        start = max(0, m.start()-40)
+        end = min(len(text), m.end()+60)
+        snippet = text[start:end].strip()
+        address_note = snippet or None
     else:
-        loc_m = re.search(r"([A-ZÇĞİIÖŞÜ][^\n,]{0,60}\b(mah(alle)?|cadde|sokak|bulvar|köy(ü)?)\b[^\n,]{0,40})", text)
+        loc_m = re.search(
+            r"([A-ZÇĞİIÖŞÜ][^\n,]{0,60}\b(mah(alle)?|cadde|sokak|bulvar|köy(ü)?)\b[^\n,]{0,40})",
+            text
+        )
         if loc_m:
-            free_text = loc_m.group(1); geo_conf = 0.2
-    return {"province": province,"district": district,"free_text": free_text,"lat": None,"lon": None,"geo_confidence": round(geo_conf, 2)}
+            address_note = loc_m.group(1).strip()
 
-def model_confidence(need_hits: List[str], urg: str, vuln_hits: List[str]) -> float:
+    # mahalle adı
+    n_m = NEIGHBORHOOD_RE.search(text)
+    if n_m:
+        neighborhood = n_m.group(1).title()
+
+    if province and (district or neighborhood):
+        geo_conf = 0.8
+    elif province:
+        geo_conf = 0.6
+    elif neighborhood or address_note:
+        geo_conf = 0.3
+    else:
+        geo_conf = 0.0
+
+    return {
+        "country": country,
+        "province": province,
+        "district": district,
+        "neighborhood": neighborhood,
+        "address_note": address_note,
+        "geo_confidence": round(geo_conf, 2)
+    }
+
+def compute_confidence(need_hits: List[str], urg: str, vuln_hits: List[str]) -> float:
     base = 0.4 if need_hits else 0.2
     base += 0.3 if urg == "critical" else (0.2 if urg == "high" else 0.0)
     base += 0.1 if vuln_hits else 0.0
     return round(min(0.95, base), 2)
 
+REQUEST_PATTERNS = [
+    r"\byardım\b", r"\byardim\b", r"\blazım\b", r"\blazim\b",
+    r"\bihtiyaç\b", r"\bihtiyac\b", r"\bimdat\b", r"\bkurtarın\b", r"\bkurtarin\b"
+]
+OFFER_PATTERNS = [
+    r"\bdağıtıyorum\b", r"\bdagıtıyorum\b", r"\bdagitiyorum\b",
+    r"\bgetirebilirim\b", r"\bgötürebilirim\b", r"\bugraştırabilirim\b", r"\bulaştırabilirim\b",
+    r"\bkalacak yerim var\b", r"\barayanlara\b"
+]
+COMPLAINT_PATTERNS = [
+    r"\bkimse (gelmedi|yok)\b", r"\bdevlet yok\b", r"\byardım gelmedi\b", r"\byardim gelmedi\b"
+]
+PRAYER_PATTERNS = [
+    r"\bdua\b", r"\binşallah\b", r"\binsallah\b", r"\bRabbim\b", r"\brabbim\b",
+    r"\bgeçmiş olsun\b", r"\bbaşımız sağ olsun\b"
+]
+
+def detect_people_count(text: str):
+    m = re.search(r"(\d+)\s*(kişi|kisi|kişiyiz|insan|çocuk|people|person|aileyiz)", text, flags=re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+    return None
+
+def detect_life_threatening(text: str, urgency: str) -> bool:
+    if urgency == "critical":
+        return True
+    for pat in URGENCY_CRITICAL + NEED_PATTERNS.get("search_rescue", []):
+        if re.search(pat, text, flags=re.IGNORECASE):
+            return True
+    return False
+
+def any_match(patterns, text: str) -> bool:
+    for pat in patterns:
+        if re.search(pat, text, flags=re.IGNORECASE):
+            return True
+    return False
+
+def detect_post_type(text: str, needs: List[str], urgency: str) -> str:
+    if any_match(OFFER_PATTERNS, text):
+        return "yardim_teklifi"
+    if needs or any_match(REQUEST_PATTERNS, text) or urgency in ("critical","high"):
+        return "yardim_talebi"
+    if any_match(COMPLAINT_PATTERNS, text):
+        return "sikayet"
+    if any_match(PRAYER_PATTERNS, text):
+        return "duygu/dua"
+    return "bilgi"
+
 def build_record(text: str) -> Dict[str, Any]:
     t = norm_text(text)
-    need, need_ev = find_need(t)
+    needs, need_hits = find_need(t)
     urg, urg_ev = find_urgency(t)
     vuln, vuln_ev = find_vulnerable(t)
     loc = extract_location(t)
-    ev_spans = list(dict.fromkeys(need_ev + urg_ev + vuln_ev))
+    people_count = detect_people_count(t)
+    life_threat = detect_life_threatening(t, urg)
+    post_type = detect_post_type(t, needs, urg)
+    confidence = compute_confidence(need_hits, urg, vuln_ev)
     return {
         "text": t,
-        "need": need,
+        "needs": needs,
         "urgency": urg,
+        "life_threatening": life_threat,
         "location": loc,
+        "people_count": people_count,
         "vulnerable_groups": vuln,
-        "evidence_spans": ev_spans,
-        "model_confidence": model_confidence(need_ev, urg, vuln_ev),
+        "post_type": post_type,
+        "confidence": confidence,
         "dedup_cluster_id": dedup_id(t),
-        "recommendations": {"nearest_assembly_points": [], "emergency_number": "112", "notes": None}
     }
 
 # ---------- CSV loading ----------
 def load_csv(path: str, text_col: str = None) -> Tuple[pd.DataFrame, str]:
     encodings = [None, "utf-8-sig", "cp1254", "iso-8859-9", "latin-5", "windows-1254"]
-    last_err = None; df = None
+    last_err = None
+    df = None
     for enc in encodings:
         try:
-            df = pd.read_csv(path, encoding=enc, on_bad_lines="skip", engine="python"); break
+            df = pd.read_csv(path, encoding=enc, on_bad_lines="skip", engine="python")
+            break
         except Exception as e:
             last_err = e
     if df is None:
@@ -185,7 +321,7 @@ def cluster_split(items: List[Dict[str, Any]], train: float, val: float, test: f
     val_k = set(keys[n_train:n_train+n_val])
     test_k = set(keys[n_train+n_val:])
     def gather(K):
-        out = []
+        out: List[Dict[str, Any]] = []
         for k in K:
             out.extend(buckets[k])
         return out
@@ -218,7 +354,7 @@ def main():
         df = df.head(args.max_rows)
 
     # Build records → user/assistant pairs
-    items = []
+    items: List[Dict[str, Any]] = []
     for _, row in df.iterrows():
         rec = build_record(row.get(text_col, ""))
         pair = to_user_assistant(rec["text"], strip_text(rec))

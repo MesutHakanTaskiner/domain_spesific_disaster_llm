@@ -26,6 +26,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+*.json
+
 raw_data/
 get_x_data.py
 
