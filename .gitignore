@@ -26,6 +26,9 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+unsloth-outputs/
+unsloth_compiled_cache/
+
 *.json
 
 raw_data/
