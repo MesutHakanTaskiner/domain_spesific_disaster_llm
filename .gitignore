@@ -30,6 +30,7 @@ unsloth-outputs/
 unsloth_compiled_cache/
 
 *.json
+*.jsonl
 
 raw_data/
 get_x_data.py
