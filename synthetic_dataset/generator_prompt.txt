@@ -1,0 +1,145 @@
+You are a synthetic data generator for a disaster-response information extraction model.
+
+Use the system prompt below verbatim as the content of the system message in every training example:
+
+[SYSTEM_PROMPT_START]
+{{SYSTEM_PROMPT}}
+[SYSTEM_PROMPT_END]
+
+Your job is to create ONE training example per request.
+
+Each training example MUST be a single JSON object with this structure:
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "<the exact system prompt text shown between SYSTEM_PROMPT_START and SYSTEM_PROMPT_END>"
+    },
+    {
+      "role": "user",
+      "content": "<a synthetic social media post about a disaster>"
+    },
+    {
+      "role": "assistant",
+      "content": "<a JSON string with the labels defined by the system prompt>"
+    }
+  ]
+}
+
+==================================================
+USER MESSAGE (synthetic social media post)
+==================================================
+
+Requirements for the USER message:
+
+- Style: realistic short-form social media (tweet-like), including possible:
+  * hashtags
+  * mentions
+  * emojis
+  * shortened links
+  * phone numbers
+  * noisy spelling and informal language
+- It must describe ONE concrete situation related to a disaster or large-scale emergency.
+- Randomly vary DISASTER TYPE across:
+  * earthquake, aftershock
+  * flood, flash flood, storm surge
+  * hurricane, typhoon, cyclone, severe storm
+  * tornado
+  * wildfire, forest fire, bushfire
+  * landslide, mudslide, avalanche
+  * volcanic eruption, ashfall
+  * drought, heatwave, blizzard, extreme cold
+  * industrial accident, chemical spill, gas leak, explosion, dam failure
+- Randomly vary the COUNTRY and location (city, region, neighborhood) across the whole world:
+  * Europe, Asia, Middle East, Africa, North America, South America, Oceania, island states, etc.
+- Randomly vary the language:
+  * You MAY use languages such as English, Spanish, French, German, Portuguese, Arabic, Indonesian, Hindi, etc.
+  * You MUST NOT use Turkish in any part of the generated content.
+- Vary the intent of the post:
+  * some pure help requests
+  * some pure information
+  * some emotion/prayer
+  * some complaints and blame
+
+==================================================
+ASSISTANT MESSAGE (label JSON STRING)
+==================================================
+
+The assistant message:
+
+- "content" MUST be a JSON STRING (not a raw JSON object) that, when parsed, yields this structure in the ideal case:
+
+{
+  "needs": [...],
+  "urgency": "low" | "normal" | "high" | "critical",
+  "life_threatening": true | false,
+  "location": {
+    "country": string or null,
+    "province": string or null,
+    "district": string or null,
+    "neighborhood": string or null,
+    "address_note": string or null,
+    "geo_confidence": float between 0 and 1
+  },
+  "people_count": integer or null,
+  "vulnerable_groups": [...],  // e.g. "child", "infant", "elderly", "pregnant", "disabled"
+  "post_type": "help_request" | "information" | "emotion/prayer" | "complaint",
+  "confidence": float between 0 and 1
+  }
+
+==================================================
+LABEL QUALITY AND NOISE
+==================================================
+
+You must produce a mix of **clean** and **noisy** labels:
+
+- For approximately 70–80% of the examples:
+  * Produce high-quality, consistent labels that follow the system prompt strictly.
+  * Include ALL expected keys in the label JSON.
+
+- For approximately 20–30% of the examples:
+  * Intentionally introduce realistic noise. Examples:
+    - Omit one or more fields (e.g. leave out "people_count", or "vulnerable_groups", or "confidence").
+    - Set some fields to null even though they could be inferred.
+    - Slightly misclassify "post_type" (e.g. treat an emotional post as "information") OR choose a less accurate "urgency".
+    - Under- or over-estimate "people_count".
+    - Use a less specific location (e.g. only country when city is clearly stated).
+  * The label JSON STRING MUST still be valid JSON syntax (no trailing commas, no broken quotes), but the content can be incomplete or imperfect.
+
+The outer training example must ALWAYS remain structurally correct:
+- The top-level object must remain valid JSON.
+- It must always contain the "messages" array with exactly three elements.
+- The three messages must have roles: "system", "user", "assistant" in that order.
+
+==================================================
+LABELING RULES FOR CLEAN CASES
+==================================================
+
+When you are NOT intentionally adding label noise:
+
+- Respect the definitions and rules in the system prompt.
+- "needs": only include needs that are clearly mentioned or very strongly implied
+  (e.g. “we need tents” -> ["shelter"]; “no food or water left” -> ["food","water"];
+   “people trapped under collapsed buildings” -> ["search_and_rescue"]).
+- "urgency" and "life_threatening":
+  * trapped people, missing people in immediate danger, medical emergencies ->
+    typically "critical" and life_threatening = true.
+  * serious but not immediately fatal conditions (no shelter in freezing temperatures,
+    no water for a long time, etc.) may still be "high" urgency even if life_threatening is false.
+  * pure emotional / solidarity / general info posts -> usually "low" urgency, life_threatening = false.
+- Locations should be as detailed as possible, with geo_confidence increasing when more detail is given.
+- Use null when some fields are unknown and you are not in noise mode.
+
+==================================================
+GLOBAL FORMATTING CONSTRAINTS
+==================================================
+
+For your overall output (as the synthetic data generator):
+
+- Return ONLY the outer JSON object with the "messages" array.
+- The object must be valid JSON.
+- The three "role" values MUST be exactly: "system", "user", "assistant".
+- Do NOT wrap anything in markdown, backticks, or natural language commentary.
+- Do NOT add any extra top-level keys outside "messages".
+- Never use Turkish in any part of the generated training example (system content, user content, or assistant content).
