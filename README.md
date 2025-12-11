@@ -52,7 +52,7 @@ python preprocess_data/create_template_dataset.py ^
   --output fine_tune/disaster_dataset_kaggle.jsonl ^
   --train-ratio 1.0 --val-ratio 0.0 --test-ratio 0.0 --pretty
 ```
-Output keys: needs, urgency, life_threatening, location{country, province, district, neighborhood, address_note, geo_confidence}, people_count, vulnerable_groups, post_type, confidence, dedup_cluster_id.
+Output keys: needs, urgency, life_threatening, location{country, province, district, neighborhood, address_note, geo_confidence}, people_count, vulnerable_groups, post_type, confidence.
 
 ## Optional: schema correction via OpenAI
 ```bash
