@@ -32,11 +32,8 @@ unsloth_compiled_cache/
 *.json
 *.jsonl
 fine_tune/data
-fine_tune/gemma2b
-fine_tune/llama3.2_3b
 fine_tune/outputs
-fine_tune/Qwen2-7b
-fine_tune/Qwen2.5-0.5b-Instruct
+fine_tune/models
 fine_tune/raw_data
 fine_tune/runs
 fine_tune/unsloth_compiled_cache
