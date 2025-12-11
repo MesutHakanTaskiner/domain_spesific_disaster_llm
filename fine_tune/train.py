@@ -28,7 +28,7 @@ def main():
 
     # ---- Paths ----
     project_root = Path(__file__).resolve().parent.parent
-    jsonl_path = project_root / "sample_data" / "disaster_train.jsonl"
+    jsonl_path = project_root / "data" / "disaster_train.jsonl"
 
     if not jsonl_path.exists():
         raise FileNotFoundError(f"JSONL file not found at: {jsonl_path}")
@@ -146,7 +146,7 @@ def main():
 
     # ---- Training config ----
     training_args = SFTConfig(
-        output_dir=str(project_root / "llama3.2_3b"),
+        output_dir=str(project_root / "models/llama3.2_3b"),
         num_train_epochs=1,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
@@ -175,7 +175,7 @@ def main():
     trainer.train()
 
     # ---- Save LoRA adapter ----
-    OUTPUT_LORA_DIR = project_root / "Llama-3.2-3B_lora"
+    OUTPUT_LORA_DIR = project_root / "models/Llama-3.2-3B_lora"
     trainer.save_model(str(OUTPUT_LORA_DIR))
     tokenizer.save_pretrained(str(OUTPUT_LORA_DIR))
 
@@ -193,7 +193,7 @@ def main():
     lora_model = PeftModel.from_pretrained(base_model, str(OUTPUT_LORA_DIR))
     merged_model = lora_model.merge_and_unload()
 
-    MERGED_DIR = project_root / "llama3.2_3b_disaster_merged_bf16"
+    MERGED_DIR = project_root / "models/llama3.2_3b_disaster_merged_bf16"
     merged_model.save_pretrained(str(MERGED_DIR))
     tokenizer.save_pretrained(str(MERGED_DIR))
 
